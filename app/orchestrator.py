@@ -1,25 +1,57 @@
-# orchestrator.py
-# Orchestrator 구현
+﻿# orchestrator.py
+# Orchestrator implementation
 
+import os
 import requests
-import time
 from app.redis_client import pop_job_queue, set_job_status
+import logging
 
-POSE_URL = "http://pose-model:8001/infer"
-STT_URL = "http://stt-model:8002/infer"
-GESTURE_URL = "http://gesture-model:8002/infer"
-GAZE_URL = "http://gaze-model:8003/infer"
+logger = logging.getLogger("app.orchestrator")
+
+POSE_URL = os.getenv("POSE_URL", "http://localhost:8001/infer")
+STT_URL = os.getenv("STT_URL", "http://localhost:8002/infer")
+GESTURE_URL = os.getenv("GESTURE_URL", "http://localhost:8004/infer")
+GAZE_URL = os.getenv("GAZE_URL", "http://localhost:8003/infer")
+MODEL_CONNECT_TIMEOUT = float(os.getenv("MODEL_CONNECT_TIMEOUT", "10"))
+POSE_READ_TIMEOUT = float(os.getenv("POSE_READ_TIMEOUT", "1800"))
+STT_READ_TIMEOUT = float(os.getenv("STT_READ_TIMEOUT", "600"))
 
 
-# 모델 실행
-def run_model(url, payload):
+def run_model(url, payload, read_timeout):
     try:
-        r = requests.post(url, json=payload, timeout=600)
-        return r.json()
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=(MODEL_CONNECT_TIMEOUT, read_timeout),
+        )
+        response.raise_for_status()
+        return response.json()
     except Exception as e:
         return {"error": str(e)}
 
-# Orchestrator 메인 루프
+
+def _extract_error(result):
+    if not isinstance(result, dict):
+        return "Invalid model response"
+
+    if "error" in result and result["error"]:
+        return str(result["error"])
+
+    if "detail" in result and result["detail"]:
+        return str(result["detail"])
+
+    return None
+
+
+def _fail_job(job_id, step, error):
+    set_job_status(job_id, {
+        "state": "FAILED",
+        "step": step,
+        "error": error,
+    })
+
+
+# Orchestrator main loop
 def run_orchestrator():
     while True:
         job = pop_job_queue()
@@ -30,48 +62,63 @@ def run_orchestrator():
         job_id = job["job_id"]
         video_url = job["video_url"]
 
-        print("START JOB", job_id)
+        logger.info("START JOB %s", job_id)
+        logger.info("Submitting pose request for video_url=%s", video_url)
         
-        # 1. Pose 모델 실행
+        # 1) Pose model
         set_job_status(job_id, {
             "state": "RUNNING",
-            "step": "pose"
+            "step": "pose",
         })
         pose_result = run_model(POSE_URL, {
-            "video_url": video_url
-        })
+            "video_url": video_url,
+        }, read_timeout=POSE_READ_TIMEOUT)
 
-        # 2. Gesture 모델 실행
+        pose_error = _extract_error(pose_result)
+        if pose_error:
+            _fail_job(job_id, "pose", pose_error)
+            logger.error("JOB FAILED %s at pose: %s", job_id, pose_error)
+            continue
+
+        # 2) Gesture model (not used yet)
         # set_job_status(job_id, {
         #     "state": "RUNNING",
         #     "step": "gesture"
         # })
         # gesture_result = run_model(GESTURE_URL, {
         #     "video_url": video_url
-        # })
+        # }, read_timeout=POSE_READ_TIMEOUT)
 
-        # 3. Gaze 모델 실행
+        # 3) Gaze model (not used yet)
         # set_job_status(job_id, {
         #     "state": "RUNNING",
         #     "step": "gaze"
         # })
         # gaze_result = run_model(GAZE_URL, {
         #     "video_url": video_url
-        # })
-        
-        # 4. STT 모델 실행
-        # set_job_status(job_id, {
-        #     "state": "RUNNING",
-        #     "step": "stt"
-        # })
-        # stt_result = run_model(STT_URL, {
-        #     "video_url": video_url
-        # })
-        
-        # 완료
+        # }, read_timeout=POSE_READ_TIMEOUT)
+
+        # 4) STT model
+        set_job_status(job_id, {
+            "state": "RUNNING",
+            "step": "stt",
+        })
+        stt_result = run_model(STT_URL, {
+            "video_url": video_url,
+        }, read_timeout=STT_READ_TIMEOUT)
+
+        stt_error = _extract_error(stt_result)
+        if stt_error:
+            _fail_job(job_id, "stt", stt_error)
+            logger.error("JOB FAILED %s at stt: %s", job_id, stt_error)
+            continue
+
+        # done
         set_job_status(job_id, {
             "state": "SUCCESS",
-            "step": "done"
+            "step": "done",
         })
-
-        print("JOB DONE", job_id)
+        
+        logger.info("JOB %s completed successfully", job_id)
+        logger.info("Pose result: %s", pose_result)
+        logger.info("STT result: %s", stt_result)

@@ -3,9 +3,13 @@ from fastapi import FastAPI
 from app.models import JobRequest
 from app.redis_client import push_job_queue, get_job_status
 from app.orchestrator import run_orchestrator
+import logging
 
 app = FastAPI()
-
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 @app.on_event("startup")
 def start_worker():
