@@ -1,4 +1,4 @@
-﻿# orchestrator.py
+# orchestrator.py
 # Orchestrator implementation
 
 import os
@@ -12,9 +12,12 @@ POSE_URL = os.getenv("POSE_URL", "http://localhost:8001/infer")
 STT_URL = os.getenv("STT_URL", "http://localhost:8002/infer")
 GESTURE_URL = os.getenv("GESTURE_URL", "http://localhost:8004/infer")
 GAZE_URL = os.getenv("GAZE_URL", "http://localhost:8003/infer")
+BACKEND_CALLBACK_URL = os.getenv("BACKEND_CALLBACK_URL")
 MODEL_CONNECT_TIMEOUT = float(os.getenv("MODEL_CONNECT_TIMEOUT", "10"))
 POSE_READ_TIMEOUT = float(os.getenv("POSE_READ_TIMEOUT", "1800"))
 STT_READ_TIMEOUT = float(os.getenv("STT_READ_TIMEOUT", "600"))
+CALLBACK_CONNECT_TIMEOUT = float(os.getenv("CALLBACK_CONNECT_TIMEOUT", "5"))
+CALLBACK_READ_TIMEOUT = float(os.getenv("CALLBACK_READ_TIMEOUT", "10"))
 
 
 def run_model(url, payload, read_timeout):
@@ -43,8 +46,37 @@ def _extract_error(result):
     return None
 
 
+def _post_job_status_callback(job_id, data):
+    if not BACKEND_CALLBACK_URL:
+        return
+
+    payload = {
+        "job_id": job_id,
+        "state": data.get("state"),
+        "step": data.get("step"),
+    }
+
+    if data.get("error"):
+        payload["error"] = data["error"]
+
+    try:
+        response = requests.post(
+            BACKEND_CALLBACK_URL,
+            json=payload,
+            timeout=(CALLBACK_CONNECT_TIMEOUT, CALLBACK_READ_TIMEOUT),
+        )
+        response.raise_for_status()
+    except Exception as e:
+        logger.exception("Failed to send backend callback for job %s: %s", job_id, e)
+
+
+def _update_job_status(job_id, data):
+    set_job_status(job_id, data)
+    _post_job_status_callback(job_id, data)
+
+
 def _fail_job(job_id, step, error):
-    set_job_status(job_id, {
+    _update_job_status(job_id, {
         "state": "FAILED",
         "step": step,
         "error": error,
@@ -66,7 +98,7 @@ def run_orchestrator():
         logger.info("Submitting pose request for video_url=%s", video_url)
         
         # 1) Pose model
-        set_job_status(job_id, {
+        _update_job_status(job_id, {
             "state": "RUNNING",
             "step": "pose",
         })
@@ -81,7 +113,7 @@ def run_orchestrator():
             continue
 
         # 2) Gesture model (not used yet)
-        # set_job_status(job_id, {
+        # _update_job_status(job_id, {
         #     "state": "RUNNING",
         #     "step": "gesture"
         # })
@@ -90,7 +122,7 @@ def run_orchestrator():
         # }, read_timeout=POSE_READ_TIMEOUT)
 
         # 3) Gaze model (not used yet)
-        # set_job_status(job_id, {
+        # _update_job_status(job_id, {
         #     "state": "RUNNING",
         #     "step": "gaze"
         # })
@@ -99,7 +131,7 @@ def run_orchestrator():
         # }, read_timeout=POSE_READ_TIMEOUT)
 
         # 4) STT model
-        set_job_status(job_id, {
+        _update_job_status(job_id, {
             "state": "RUNNING",
             "step": "stt",
         })
@@ -114,7 +146,7 @@ def run_orchestrator():
             continue
 
         # done
-        set_job_status(job_id, {
+        _update_job_status(job_id, {
             "state": "SUCCESS",
             "step": "done",
         })
