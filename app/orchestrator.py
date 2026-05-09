@@ -16,6 +16,7 @@ logger = logging.getLogger('app.orchestrator')
 POSE_URL = os.getenv('POSE_URL', 'http://localhost:8001/infer')
 STT_URL = os.getenv('STT_URL', 'http://localhost:8002/infer')
 PITCH_URL = os.getenv('PITCH_URL', 'http://localhost:8005/infer')
+REFINER_URL = os.getenv('REFINER_URL', 'http://localhost:8006/refine')
 LLM_URL = os.getenv('LLM_URL', 'http://localhost:8004/feedback')
 GESTURE_URL = os.getenv('GESTURE_URL', 'http://localhost:8004/infer')
 GAZE_URL = os.getenv('GAZE_URL', 'http://localhost:8003/infer')
@@ -24,6 +25,7 @@ MODEL_CONNECT_TIMEOUT = float(os.getenv('MODEL_CONNECT_TIMEOUT', '10'))
 POSE_READ_TIMEOUT = float(os.getenv('POSE_READ_TIMEOUT', '1800'))
 STT_READ_TIMEOUT = float(os.getenv('STT_READ_TIMEOUT', '600'))
 PITCH_READ_TIMEOUT = float(os.getenv('PITCH_READ_TIMEOUT', '600'))
+REFINER_READ_TIMEOUT = float(os.getenv('REFINER_READ_TIMEOUT', '120'))
 LLM_READ_TIMEOUT = float(os.getenv('LLM_READ_TIMEOUT', '120'))
 CALLBACK_CONNECT_TIMEOUT = float(os.getenv('CALLBACK_CONNECT_TIMEOUT', '5'))
 CALLBACK_READ_TIMEOUT = float(os.getenv('CALLBACK_READ_TIMEOUT', '10'))
@@ -232,6 +234,20 @@ def run_orchestrator():
         if pitch_execution is None:
             continue
 
+        refiner_execution = _run_step(
+            job_id=job_id,
+            step_name='refiner',
+            model_url=REFINER_URL,
+            payload={
+                'pitch_result': pitch_execution['model_result'],
+                'stt_result': stt_execution['model_result'],
+                'pose_result': pose_execution['model_result'],
+            },
+            read_timeout=REFINER_READ_TIMEOUT,
+        )
+        if refiner_execution is None:
+            continue
+
         llm_execution = _run_step(
             job_id=job_id,
             step_name='llm',
@@ -241,6 +257,7 @@ def run_orchestrator():
                 'pose_result': pose_execution['model_result'],
                 'stt_result': stt_execution['model_result'],
                 'pitch_result': pitch_execution['model_result'],
+                'refiner_result': refiner_execution['model_result'],
             },
             read_timeout=LLM_READ_TIMEOUT,
         )
@@ -251,6 +268,7 @@ def run_orchestrator():
         logger.info('Pose result: %s', pose_execution['model_result'])
         logger.info('STT result: %s', stt_execution['model_result'])
         logger.info('Pitch result: %s', pitch_execution['model_result'])
+        logger.info('Refiner result: %s', refiner_execution['model_result'])
         logger.info('LLM result: %s', llm_execution['model_result'])
         logger.info(
             'Uploaded artifacts: %s',
@@ -258,6 +276,7 @@ def run_orchestrator():
                 'pose': pose_execution['uploaded_result'],
                 'stt': stt_execution['uploaded_result'],
                 'pitch': pitch_execution['uploaded_result'],
+                'refiner': refiner_execution['uploaded_result'],
                 'llm': llm_execution['uploaded_result'],
             },
         )

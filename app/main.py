@@ -18,7 +18,7 @@ def start_worker():
     thread.start()
 
 
-@app.post("/job")
+@app.post("/api/orchestrator/job")
 def create_job(req: JobRequest):
 
     job_data = {
@@ -34,7 +34,7 @@ def create_job(req: JobRequest):
     }
 
 
-@app.get("/job/{job_id}")
+@app.get("/api/orchestrator/job/{job_id}")
 def get_job(job_id: str):
     status = get_job_status(job_id)
 
