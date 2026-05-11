@@ -34,6 +34,7 @@ class S3ArtifactUploader:
         self.client = boto3.client("s3", region_name=self.region) if self.save_results_s3 else None
 
     def upload_model_outputs(self, job_id: str, model_name: str, result: dict[str, Any]) -> dict[str, Any]:
+        result_json_payload = self._result_json_payload(result)
         uploaded = {
             "json_url": None,
             "mp4_urls": [],
@@ -43,7 +44,7 @@ class S3ArtifactUploader:
 
         if self.save_results_s3:
             uploaded["json_url"] = self.upload_json(
-                payload=result,
+                payload=result_json_payload,
                 key=self._build_key(job_id, model_name, "result.json"),
             )
 
@@ -105,7 +106,7 @@ class S3ArtifactUploader:
         (result_dir / "media").mkdir(parents=True, exist_ok=True)
 
         result_json_path = result_dir / "result.json"
-        self._write_json_file(result_json_path, result)
+        self._write_json_file(result_json_path, self._result_json_payload(result))
         saved.append({
             "type": "result_json",
             "path": str(result_json_path),
@@ -146,6 +147,33 @@ class S3ArtifactUploader:
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    def _result_json_payload(self, result: dict[str, Any]) -> dict[str, Any]:
+        return self._strip_artifact_payloads(result) if isinstance(result, dict) else result
+
+    def _strip_artifact_payloads(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            stripped: dict[str, Any] = {}
+            for key, nested_value in value.items():
+                if key == "artifacts" and isinstance(nested_value, dict):
+                    stripped[key] = {
+                        artifact_name: {
+                            artifact_key: self._strip_artifact_payloads(artifact_value)
+                            for artifact_key, artifact_value in artifact.items()
+                            if artifact_key != "payload"
+                        }
+                        if isinstance(artifact, dict)
+                        else self._strip_artifact_payloads(artifact)
+                        for artifact_name, artifact in nested_value.items()
+                    }
+                else:
+                    stripped[key] = self._strip_artifact_payloads(nested_value)
+            return stripped
+
+        if isinstance(value, list):
+            return [self._strip_artifact_payloads(nested_value) for nested_value in value]
+
+        return value
 
     def _collect_mp4_paths(self, value: Any) -> list[str]:
         collected: list[str] = []

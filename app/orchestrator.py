@@ -24,6 +24,7 @@ BACKEND_CALLBACK_URL = os.getenv('BACKEND_CALLBACK_URL')
 MODEL_CONNECT_TIMEOUT = float(os.getenv('MODEL_CONNECT_TIMEOUT', '10'))
 POSE_READ_TIMEOUT = float(os.getenv('POSE_READ_TIMEOUT', '1800'))
 STT_READ_TIMEOUT = float(os.getenv('STT_READ_TIMEOUT', '600'))
+GAZE_READ_TIMEOUT = float(os.getenv('GAZE_READ_TIMEOUT', '900'))
 PITCH_READ_TIMEOUT = float(os.getenv('PITCH_READ_TIMEOUT', '600'))
 REFINER_READ_TIMEOUT = float(os.getenv('REFINER_READ_TIMEOUT', '120'))
 LLM_READ_TIMEOUT = float(os.getenv('LLM_READ_TIMEOUT', '120'))
@@ -209,7 +210,15 @@ def run_orchestrator():
         if pose_execution is None:
             continue
 
-        # gesture/gaze can be added here with the same pattern when enabled.
+        gaze_execution = _run_step(
+            job_id=job_id,
+            step_name='gaze',
+            model_url=GAZE_URL,
+            payload={'video_url': video_url},
+            read_timeout=GAZE_READ_TIMEOUT,
+        )
+        if gaze_execution is None:
+            continue
 
         stt_execution = _run_step(
             job_id=job_id,
@@ -266,6 +275,7 @@ def run_orchestrator():
 
         logger.info('JOB %s completed successfully', job_id)
         logger.info('Pose result: %s', pose_execution['model_result'])
+        logger.info('Gaze result: %s', gaze_execution['model_result'])
         logger.info('STT result: %s', stt_execution['model_result'])
         logger.info('Pitch result: %s', pitch_execution['model_result'])
         logger.info('Refiner result: %s', refiner_execution['model_result'])
@@ -274,6 +284,7 @@ def run_orchestrator():
             'Uploaded artifacts: %s',
             {
                 'pose': pose_execution['uploaded_result'],
+                'gaze': gaze_execution['uploaded_result'],
                 'stt': stt_execution['uploaded_result'],
                 'pitch': pitch_execution['uploaded_result'],
                 'refiner': refiner_execution['uploaded_result'],
